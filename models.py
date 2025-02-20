@@ -3,12 +3,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Set number of vertices per mesh and output dimension (vertices * 3 coordinates)
-NUM_VERTICES = 3000
-MESH_OUT_DIM = NUM_VERTICES * 3
+# Update number of vertices and mesh output dimension based on your dataset
+NUM_VERTICES = 3140
+MESH_OUT_DIM = NUM_VERTICES * 3  # 3140 * 3 = 9420
 
 class Generator(nn.Module):
-    def __init__(self, noise_size=200, condition_size=10, hidden_dim=4096):
+    def __init__(self, noise_size=200, condition_size=260, hidden_dim=4096):
         super(Generator, self).__init__()
         self.noise_size = noise_size
         self.condition_size = condition_size
@@ -35,7 +35,7 @@ class Generator(nn.Module):
         return x
 
 class Discriminator(nn.Module):
-    def __init__(self, condition_size=10, hidden_dim=1024):
+    def __init__(self, condition_size=260, hidden_dim=1024):
         super(Discriminator, self).__init__()
         self.condition_size = condition_size
         
