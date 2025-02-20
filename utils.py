@@ -4,15 +4,6 @@ import numpy as np
 import pandas as pd
 import trimesh
 
-def get_mesh(file_path):
-    """
-    Load a mesh from an OBJ file and return its vertex coordinates.
-    Assumes the mesh has a fixed number of vertices (e.g. 3000).
-    """
-    mesh = trimesh.load(file_path, process=False)
-    vertices = mesh.vertices.astype(np.float32)
-    return vertices
-
 def get_mesh_faces(file_path):
     """
     Load a mesh from an OBJ file and return its face connectivity.
@@ -27,34 +18,48 @@ def load_fixed_connectivity(template_obj_path):
     """
     return get_mesh_faces(template_obj_path)
 
+def get_mesh(file_path):
+    """
+    Load a mesh from an OBJ file and return its vertex coordinates.
+    """
+    try:
+        mesh = trimesh.load(file_path, process=False)
+        return mesh.vertices.astype(np.float32)
+    except Exception as e:
+        print(f"Error loading mesh: {file_path} -> {e}")
+        return None  # Return None if loading fails
 
 def load_dna_face_data(csv_file, face_folder):
     """
     Load SNP data from a CSV file and corresponding 3D face meshes from OBJ files.
-    The CSV must have an 'ID' column and SNP feature columns.
+    Skips entries that do not have a matching 3D face file.
     """
-    df = pd.read_csv(csv_file, sep="\t")  # Adjust separator if needed
-    faces = []
-    snps = []
-    ids = []
-    
+    df = pd.read_csv(csv_file, sep=",")  # Adjust separator if needed
+    valid_faces = []
+    valid_snps = []
+    valid_ids = []
+
     for _, row in df.iterrows():
         sample_id = row['ID']
-        # Extract SNP vector (all columns except 'ID')
         snp_vector = row.drop('ID').values.astype(np.float32)
-        # Construct the OBJ filename based on sample ID
-        file_name = f"symmetrized_{sample_id}_cleaned.obj"
+        file_name = f"symmetrized_{int(sample_id)}_cleaned.obj"
         file_path = os.path.join(face_folder, file_name)
-        # Load the mesh vertices
-        mesh_vertices = get_mesh(file_path)
-        
-        faces.append(mesh_vertices)
-        snps.append(snp_vector)
-        ids.append(sample_id)
-        
-    faces = np.array(faces)   # Expected shape: (N, NUM_VERTICES, 3)
-    snps = np.array(snps)     # Expected shape: (N, number_of_SNPs)
-    return snps, faces, ids
+
+        if os.path.exists(file_path):
+            mesh_vertices = get_mesh(file_path)
+            if mesh_vertices is not None:
+                valid_faces.append(mesh_vertices)
+                valid_snps.append(snp_vector)
+                valid_ids.append(sample_id)
+        else:
+            print(f"Skipping sample {sample_id}: No matching OBJ file found.")
+
+    valid_faces = np.array(valid_faces)  # Shape: (N, NUM_VERTICES, 3)
+    valid_snps = np.array(valid_snps)    # Shape: (N, num_SNPs)
+
+    print(f"Shapes: {valid_faces.shape}, {valid_snps.shape}")
+    
+    return valid_snps, valid_faces, valid_ids
 
 def export_mesh_to_obj(vertices, faces, file_path):
     """
