@@ -1,71 +1,60 @@
+# models.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Set number of vertices per mesh and output dimension (vertices * 3 coordinates)
+NUM_VERTICES = 3000
+MESH_OUT_DIM = NUM_VERTICES * 3
+
 class Generator(nn.Module):
-    def __init__ (self, noise_size=201, cube_resolution=32):
+    def __init__(self, noise_size=200, condition_size=10, hidden_dim=4096):
         super(Generator, self).__init__()
-        
         self.noise_size = noise_size
-        self.cube_resolution = cube_resolution
+        self.condition_size = condition_size
+        self.input_size = noise_size + condition_size
         
-        self.gen_conv1 = torch.nn.ConvTranspose3d(self.noise_size, 256, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.gen_conv2 = torch.nn.ConvTranspose3d(256, 128, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.gen_conv3 = torch.nn.ConvTranspose3d(128, 64, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.gen_conv4 = torch.nn.ConvTranspose3d(64, 32, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.gen_conv5 = torch.nn.ConvTranspose3d(32, 1, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
+        # Define a simple MLP network
+        self.fc1 = nn.Linear(self.input_size, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.fc3 = nn.Linear(hidden_dim // 2, hidden_dim // 4)
+        self.fc4 = nn.Linear(hidden_dim // 4, MESH_OUT_DIM)
         
-        self.gen_bn1 = nn.BatchNorm3d(256)
-        self.gen_bn2 = nn.BatchNorm3d(128)
-        self.gen_bn3 = nn.BatchNorm3d(64)
-        self.gen_bn4 = nn.BatchNorm3d(32)
-        
+        self.relu = nn.ReLU(inplace=True)
+        self.tanh = nn.Tanh()  # Use tanh to output values in [-1, 1]
     
-    def forward(self, x, condition):
-        
-        condition_tensor = condition * torch.ones([x.shape[0],1], device=x.device)
-        x = torch.cat([x, condition_tensor], dim=1)
-        x = x.view(x.shape[0],self.noise_size,1,1,1)
-        
-        x = F.relu(self.gen_bn1(self.gen_conv1(x)))
-        x = F.relu(self.gen_bn2(self.gen_conv2(x)))
-        x = F.relu(self.gen_bn3(self.gen_conv3(x)))
-        x = F.relu(self.gen_bn4(self.gen_conv4(x)))
-        x = self.gen_conv5(x)
-        x = torch.sigmoid(x)
-        
-        return x.squeeze()
-                      
+    def forward(self, noise, condition):
+        # noise: (batch, noise_size), condition: (batch, condition_size)
+        x = torch.cat([noise, condition], dim=1)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.relu(self.fc3(x))
+        x = self.tanh(self.fc4(x))
+        # Reshape to (batch, NUM_VERTICES, 3)
+        x = x.view(x.size(0), NUM_VERTICES, 3)
+        return x
+
 class Discriminator(nn.Module):
-    def __init__ (self, cube_resolution=32):
+    def __init__(self, condition_size=10, hidden_dim=1024):
         super(Discriminator, self).__init__()
+        self.condition_size = condition_size
         
-        self.cube_resolution = cube_resolution
+        # Input dimension: flattened mesh + condition vector (MESH_OUT_DIM + condition_size)
+        self.input_dim = MESH_OUT_DIM + condition_size
         
-        self.disc_conv1 = torch.nn.Conv3d(2, 32, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.disc_conv2 = torch.nn.Conv3d(32, 64, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.disc_conv3 = torch.nn.Conv3d(64, 128, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.disc_conv4 = torch.nn.Conv3d(128, 256, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
-        self.disc_conv5 = torch.nn.Conv3d(256, 1, kernel_size=[4,4,4], stride=[2,2,2], padding=1)
+        self.fc1 = nn.Linear(self.input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.fc3 = nn.Linear(hidden_dim // 2, 1)
         
-        self.disc_bn1 = nn.BatchNorm3d(32)
-        self.disc_bn2 = nn.BatchNorm3d(64)
-        self.disc_bn3 = nn.BatchNorm3d(128)
-        self.disc_bn4 = nn.BatchNorm3d(256)
-        
-        self.LRelu = nn.LeakyReLU(0.2, True)
+        self.lrelu = nn.LeakyReLU(0.2, inplace=True)
+        self.sigmoid = nn.Sigmoid()
     
-    def forward(self, x, condition):
-        
-        x = x.unsqueeze(1)
-        condition_tensor =  condition * torch.ones_like(x, device=x.device)
-        x = torch.cat([x, condition_tensor], dim=1)
-        
-        x = self.LRelu(self.disc_bn1(self.disc_conv1(x)))
-        x = self.LRelu(self.disc_bn2(self.disc_conv2(x)))
-        x = self.LRelu(self.disc_bn3(self.disc_conv3(x)))
-        x = self.LRelu(self.disc_bn4(self.disc_conv4(x)))
-        x = self.disc_conv5(x)
-        x = torch.sigmoid(x)
-        
+    def forward(self, mesh, condition):
+        # mesh: (batch, NUM_VERTICES, 3) -> flatten to (batch, MESH_OUT_DIM)
+        mesh_flat = mesh.view(mesh.size(0), -1)
+        # Concatenate with condition: (batch, MESH_OUT_DIM + condition_size)
+        x = torch.cat([mesh_flat, condition], dim=1)
+        x = self.lrelu(self.fc1(x))
+        x = self.lrelu(self.fc2(x))
+        x = self.sigmoid(self.fc3(x))
         return x.squeeze()
