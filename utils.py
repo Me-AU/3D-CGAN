@@ -1,84 +1,71 @@
-import scipy.io
-from os import listdir
-from os.path import isfile, join
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+# utils.py
 import os
-import sys
-import shutil
+import numpy as np
+import pandas as pd
+import trimesh
 
-# get a single 3D model from .mat file
-def get_model(file_path): 
-    
-    mat = scipy.io.loadmat( file_path )
-    model_array = mat['instance']
-    model_array = np.pad(model_array,1,'constant',constant_values=0)
-    return model_array
+def get_mesh(file_path):
+    """
+    Load a mesh from an OBJ file and return its vertex coordinates.
+    Assumes the mesh has a fixed number of vertices (e.g. 3000).
+    """
+    mesh = trimesh.load(file_path, process=False)
+    vertices = mesh.vertices.astype(np.float32)
+    return vertices
 
-# load all models for a single rotation
-def load_all(folder_name, contains = None):
-    
-    file_names = [f for f in listdir(folder_name) if isfile(join(folder_name, f))]
-    
-    if (contains != None):
-        file_names = [s for s in file_names if contains in s]
-    
-    models = []
-    
-    for m in range(len(file_names)):
-        file_path = (folder_name + '/' + file_names[m])
-        models.append(get_model(file_path))
-    return np.array(models)
+def get_mesh_faces(file_path):
+    """
+    Load a mesh from an OBJ file and return its face connectivity.
+    Assumes the mesh has a consistent topology across samples.
+    """
+    mesh = trimesh.load(file_path, process=False)
+    return mesh.faces.astype(np.int32)
 
-# visualize 3D voxel models, input is a list of a batch of 3D arrays to visualize all conditions together  
-def visualize_all(models , save = False, name = "output", fig_count = 4, fig_size = 5):
+def load_fixed_connectivity(template_obj_path):
+    """
+    Load the face connectivity from a template OBJ file.
+    """
+    return get_mesh_faces(template_obj_path)
+
+
+def load_dna_face_data(csv_file, face_folder):
+    """
+    Load SNP data from a CSV file and corresponding 3D face meshes from OBJ files.
+    The CSV must have an 'ID' column and SNP feature columns.
+    """
+    df = pd.read_csv(csv_file, sep="\t")  # Adjust separator if needed
+    faces = []
+    snps = []
+    ids = []
     
-    fig = plt.figure()
-    
-    m = 0
-    for model in models:
+    for _, row in df.iterrows():
+        sample_id = row['ID']
+        # Extract SNP vector (all columns except 'ID')
+        snp_vector = row.drop('ID').values.astype(np.float32)
+        # Construct the OBJ filename based on sample ID
+        file_name = f"symmetrized_{sample_id}_cleaned.obj"
+        file_path = os.path.join(face_folder, file_name)
+        # Load the mesh vertices
+        mesh_vertices = get_mesh(file_path)
         
-        if(model.dtype == bool):
-            voxel = model
-        else:
-            voxel = np.squeeze(model) > 0.5
-    
-        ax = []
-        colors = []
+        faces.append(mesh_vertices)
+        snps.append(snp_vector)
+        ids.append(sample_id)
         
-        for i in range(fig_count):
-            ax.append( fig.add_subplot(len(models), fig_count, (m*fig_count) + i+1, projection='3d') )
+    faces = np.array(faces)   # Expected shape: (N, NUM_VERTICES, 3)
+    snps = np.array(snps)     # Expected shape: (N, number_of_SNPs)
+    return snps, faces, ids
 
-        for i in range(fig_count):
-            ax[i].voxels(voxel[i], facecolors='red', edgecolor='k', shade=False)
-            ax[i].grid(False)
-            ax[i].axis('off')
-        
-        m += 1
-    
-    plt.tight_layout()
-    
-    fig.set_figheight(fig_size)
-    fig.set_figwidth(fig_size*fig_count)
-    #plt.show()
-    if(save):
-        fig.savefig(name +'.png')
-        plt.close(fig)
-        fig.clear()
-    else :
-        plt.show()
-
-# plot loss graph        
-def plot_graph(lists, name):
-    for l in lists:
-        plt.plot(l)
-    
-    plt.savefig(name +'.png')
-    plt.close()
-
-# create the log folder   
-def clear_folder(path):
-    if os.path.exists(path):
-        shutil.rmtree(path)
-    os.mkdir(path)
+def export_mesh_to_obj(vertices, faces, file_path):
+    """
+    Export a mesh defined by vertices and faces to an OBJ file.
+    vertices: numpy array of shape (NUM_VERTICES, 3)
+    faces: numpy array of shape (M, 3)
+    """
+    with open(file_path, "w") as f:
+        # Write vertices (formatted to 4 decimal places)
+        for v in vertices:
+            f.write("v {:.4f} {:.4f} {:.4f}\n".format(v[0], v[1], v[2]))
+        # Write faces (OBJ format uses 1-indexed vertices)
+        for face in faces:
+            f.write("f {} {} {}\n".format(face[0] + 1, face[1] + 1, face[2] + 1))
